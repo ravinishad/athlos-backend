@@ -8,8 +8,10 @@ app.use(express.json());
 // Routes
 const coachRoutes = require("./routes/coachRoutes");
 const athleteRoutes = require("./routes/athleteRoutes");
+const testRecordRoutes = require("./routes/testRecordRoutes");
 app.use("/api/coaches", coachRoutes);
 app.use("/api/athletes", athleteRoutes);
+app.use("/api/test-records", testRecordRoutes);
 
 // Health check route
 app.get("/", (req, res) => {
