@@ -1,10 +1,12 @@
 const TestRecord = require("../models/TestRecord");
 const Athlete = require("../models/Athlete");
+const TestType = require("../models/TestType");
+
 
 // ✅ Create Test Record
 exports.createTestRecord = async (req, res) => {
   try {
-    const { athleteId, testType, score, unit, notes, testDate } = req.body;
+    const { athleteId, testTypeId, score, notes, testDate } = req.body;
 
     // Check if athlete exists and belongs to logged-in coach
     const athlete = await Athlete.findOne({
@@ -16,12 +18,22 @@ exports.createTestRecord = async (req, res) => {
       return res.status(404).json({ message: "Athlete not found" });
     }
 
+    // Check if test type exists for this coach
+    const testType = await TestType.findOne({
+      _id: testTypeId,
+      coach: req.coach._id,
+    });
+
+    if (!testType) {
+      return res.status(404).json({ message: "Test type not found" });
+    }
+
     const testRecord = await TestRecord.create({
       athlete: athleteId,
       coach: req.coach._id,
-      testType,
+      testType: testTypeId,
       score,
-      unit,
+      unit: testType.unit,
       notes,
       testDate,
     });
@@ -33,7 +45,8 @@ exports.createTestRecord = async (req, res) => {
   }
 };
 
-// ✅ Get All Test Records for an Athlete
+
+// ✅ Get All Test Records for an Athlete (with pagination + filtering)
 exports.getTestRecordsByAthlete = async (req, res) => {
   try {
     const page = Number(req.query.page) || 1;
@@ -45,9 +58,9 @@ exports.getTestRecordsByAthlete = async (req, res) => {
       coach: req.coach._id,
     };
 
-    // Filter by test type
-    if (req.query.testType) {
-      filters.testType = req.query.testType;
+    // Filter by testTypeId
+    if (req.query.testTypeId) {
+      filters.testType = req.query.testTypeId;
     }
 
     // Filter by date range
@@ -66,6 +79,7 @@ exports.getTestRecordsByAthlete = async (req, res) => {
     const total = await TestRecord.countDocuments(filters);
 
     const records = await TestRecord.find(filters)
+      .populate("testType")
       .sort({ testDate: -1 })
       .skip(skip)
       .limit(limit);
@@ -82,30 +96,44 @@ exports.getTestRecordsByAthlete = async (req, res) => {
   }
 };
 
+
 // ✅ Analytics for Athlete
 exports.getAthleteAnalytics = async (req, res) => {
   try {
     const records = await TestRecord.find({
       athlete: req.params.athleteId,
       coach: req.coach._id,
-    }).sort({ testDate: 1 }); // oldest first
+    })
+      .populate("testType")
+      .sort({ testDate: 1 });
 
     if (records.length === 0) {
       return res.status(404).json({ message: "No test records found" });
     }
 
     const totalTests = records.length;
-
     const scores = records.map(r => r.score);
 
-    const bestScore = Math.min(...scores); // assuming lower is better (like sprint)
+    // Determine best score based on test type
+    const isLowerBetter = records[0].testType.isLowerBetter;
+
+    const bestScore = isLowerBetter
+      ? Math.min(...scores)
+      : Math.max(...scores);
+
     const averageScore =
       scores.reduce((a, b) => a + b, 0) / totalTests;
 
     const firstScore = records[0].score;
     const latestScore = records[records.length - 1].score;
 
-    const improvement = firstScore - latestScore;
+    let improvement;
+
+    if (isLowerBetter) {
+      improvement = firstScore - latestScore;
+    } else {
+      improvement = latestScore - firstScore;
+    }
 
     res.json({
       totalTests,
@@ -121,15 +149,25 @@ exports.getAthleteAnalytics = async (req, res) => {
   }
 };
 
-// ✅ Performance Trend (Graph Ready)
+
+// ✅ Performance Trend (Fully DB-Driven Intelligence)
 exports.getPerformanceTrend = async (req, res) => {
   try {
     const { athleteId } = req.params;
+    const { testTypeId } = req.query;
 
-    const records = await TestRecord.find({
+    const filters = {
       athlete: athleteId,
       coach: req.coach._id,
-    }).sort({ testDate: 1 }); // oldest first for proper trend
+    };
+
+    if (testTypeId) {
+      filters.testType = testTypeId;
+    }
+
+    const records = await TestRecord.find(filters)
+      .populate("testType")
+      .sort({ testDate: 1 });
 
     if (records.length === 0) {
       return res.status(404).json({ message: "No test records found" });
@@ -141,9 +179,38 @@ exports.getPerformanceTrend = async (req, res) => {
 
     const scores = records.map(record => record.score);
 
+    const isLowerBetter = records[0].testType.isLowerBetter;
+
+    let improvementPercentage = 0;
+    let trend = "Stable";
+
+    if (scores.length >= 2) {
+      const firstScore = scores[0];
+      const lastScore = scores[scores.length - 1];
+
+      if (isLowerBetter) {
+        improvementPercentage =
+          ((firstScore - lastScore) / firstScore) * 100;
+      } else {
+        improvementPercentage =
+          ((lastScore - firstScore) / firstScore) * 100;
+      }
+
+      improvementPercentage = Number(improvementPercentage.toFixed(2));
+
+      if (improvementPercentage > 0) {
+        trend = "Improving";
+      } else if (improvementPercentage < 0) {
+        trend = "Declining";
+      }
+    }
+
     res.json({
+      testType: records[0].testType.name,
       labels,
       scores,
+      improvementPercentage,
+      trend,
     });
 
   } catch (error) {

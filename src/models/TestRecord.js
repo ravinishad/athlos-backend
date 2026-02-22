@@ -12,10 +12,11 @@ const testRecordSchema = new mongoose.Schema(
       ref: "Coach",
       required: true,
     },
-    testType: {
-      type: String,
-      required: true,
-    },
+   testType: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "TestType",
+  required: true,
+},
     score: {
       type: Number,
       required: true,
